@@ -1,0 +1,12 @@
+{application, fcache,
+ [
+  {description, ""},
+  {vsn, "0.1"},
+  {registered, []},
+  {applications, [
+                  kernel,
+                  stdlib
+                 ]},
+  {mod, { fcache_app, []}},
+  {env, []}
+ ]}.
