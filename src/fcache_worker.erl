@@ -29,8 +29,8 @@ start_link(Name, Opts) when is_list(Opts)->
 %% ------------------------------------------------------------------
 
 init({Name, Opts}) ->
-	Size  = proplists:get_value(size, Opts, 1000),
-	Var   = proplists:get_value(variance,   Opts, 250),
+	Size  = proplists:get_value(size, Opts, 10000),
+	Var   = proplists:get_value(variance,   Opts, 2500),
 	Act   = proplists:get_value(activity,   Opts, 10),
 	Prob  = proplists:get_value(probabilty, Opts, 0.001),
 	{ok, Bloom} = ebloom:new(Act*Size, Prob, random:uniform(10000)),
@@ -46,12 +46,14 @@ handle_call({get, Key}, _From, #cache{table=Table, filter=Bloom} = State) ->
 		true  ->
 			[{Key, _Counter, Value}] = ets:lookup(Table,Key),
 			ets:update_counter(Table, Key, 1),
-			{reply, {ok, {Key, Value}}, State}
+			{ok, FullValue} = snappy:decompress(Value),
+			{reply, {ok, {Key, FullValue}}, State}
 	end;
 handle_call(_Request, _From, State) ->
     {reply, ok, State}.
 
-handle_cast({put, {Key, Value}}, #cache{table=Table, filter=Bloom, size=Size, variance=Var, activity=Act, probability=Prob} = State) ->
+handle_cast({put, {Key, FullValue}}, #cache{table=Table, filter=Bloom, size=Size, variance=Var, activity=Act, probability=Prob} = State) ->
+	{ok, Value} = snappy:compress(FullValue),
 	case ets:insert_new(Table, {Key, 0, Value}) of
 		false -> ets:update_counter(Table, Key, 1), ets:update_element(Table, Key, {3, Value});
 		true  -> ebloom:insert(Bloom, Key)
@@ -84,7 +86,6 @@ code_change(_OldVsn, State, _Extra) ->
 %% ------------------------------------------------------------------
 
 pruneTable(Table, ActualSize, Size, Var, Act, Prob) when ActualSize > Size+Var -> 
-	io:format("~p~n",[[Table,ActualSize, Size,Var]]),
 	Prune = ActualSize-(Size-Var),
 	DeleteList = ets:foldl(fun({Key, Count, _Value}, Acc)-> lists:sublist(lists:merge(Acc, [{Count, Key}]), Prune) end, [], Table),
 	[ets:delete(Table, Key) || {_Count, Key} <- DeleteList],
