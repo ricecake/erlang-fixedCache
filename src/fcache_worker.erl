@@ -6,7 +6,7 @@
 %% API Function Exports
 %% ------------------------------------------------------------------
 
--export([start_link/0]).
+-export([start_link/2]).
 
 %% ------------------------------------------------------------------
 %% gen_server Function Exports
@@ -15,19 +15,29 @@
 -export([init/1, handle_call/3, handle_cast/2, handle_info/2,
          terminate/2, code_change/3]).
 
+-record(cache, {table, size=1000, variance=250, filter}).
+
 %% ------------------------------------------------------------------
 %% API Function Definitions
 %% ------------------------------------------------------------------
 
-start_link() ->
-    gen_server:start_link({local, ?SERVER}, ?MODULE, [], []).
+start_link(Name, Opts) when is_list(Opts)->
+    gen_server:start_link({local, Name}, ?MODULE, {Name, Opts}, []).
 
 %% ------------------------------------------------------------------
 %% gen_server Function Definitions
 %% ------------------------------------------------------------------
 
-init(Args) ->
-    {ok, Args}.
+init({Name, Opts}) ->
+	Size  = proplists:get_value(size, Opts, 1000),
+	Var   = proplists:get_value(variance,   Opts, 250),
+	Act   = proplists:get_value(activity,   Opts, 10),
+	Prob  = proplists:get_value(probabilty, Opts, 0.001),
+	{ok, Bloom} = ebloom:new(Act*Size, Prob, random:uniform(10000)),
+	case fcache_srv:get_table(Name) of 
+		{ok, {fresh, Table}} -> {ok, #cache{table=Table, filter=Bloom, size=Size, variance=Var}};
+		{ok, {stale, Table}} -> {ok, #cache{table=Table, filter=Bloom, size=Size, variance=Var}}
+	end.
 
 handle_call(_Request, _From, State) ->
     {reply, ok, State}.
