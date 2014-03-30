@@ -15,7 +15,7 @@
 -export([init/1, handle_call/3, handle_cast/2, handle_info/2,
          terminate/2, code_change/3]).
 
--record(cache, {table, size=1000, variance=250, filter}).
+-record(cache, {table, filter, size=1000, variance=250, activity=10, probability=0.001}).
 
 %% ------------------------------------------------------------------
 %% API Function Definitions
@@ -35,8 +35,8 @@ init({Name, Opts}) ->
 	Prob  = proplists:get_value(probabilty, Opts, 0.001),
 	{ok, Bloom} = ebloom:new(Act*Size, Prob, random:uniform(10000)),
 	case fcache_srv:get_table(Name) of 
-		{ok, {fresh, Table}} -> {ok, #cache{table=Table, filter=Bloom, size=Size, variance=Var}};
-		{ok, {stale, Table}} -> {ok, #cache{table=Table, filter=Bloom, size=Size, variance=Var}}
+		{ok, {fresh, Table}} -> {ok, #cache{table=Table, filter=Bloom, size=Size, variance=Var, activity=Act, probability=Prob}};
+		{ok, {stale, Table}} -> {ok, #cache{table=Table, filter=Bloom, size=Size, variance=Var, activity=Act, probability=Prob}}
 	end.
 
 
@@ -51,16 +51,18 @@ handle_call({get, Key}, _From, #cache{table=Table, filter=Bloom} = State) ->
 handle_call(_Request, _From, State) ->
     {reply, ok, State}.
 
-handle_cast({put, {Key, Value}}, #cache{table=Table, filter=Bloom, size=Size, variance=Var} = State) ->
+handle_cast({put, {Key, Value}}, #cache{table=Table, filter=Bloom, size=Size, variance=Var, activity=Act, probability=Prob} = State) ->
 	case ets:insert_new(Table, {Key, 0, Value}) of
 		false -> ets:update_counter(Table, Key, 1), ets:update_element(Table, Key, {3, Value});
 		true  -> ebloom:insert(Bloom, Key)
 	end,
-	ok = case ets:info(Table, size) > Size+Var of
-		true -> pruneTable(Table, Size, Var);
-		false-> ok
-	end,
-	{noreply, State};
+	ActualSize = ets:info(Table, size),
+	case ActualSize > Size+Var of
+		true -> 
+			Filter = pruneTable(Table, ActualSize, Size, Var, Act, Prob),
+			{noreply, State#cache{filter=Filter}};
+		false-> {noreply, State}
+	end;
 handle_cast({del, Key}, #cache{table=Table} = State) -> 
 	true = ets:delete(Table, Key),
 	{noreply, State};
@@ -81,9 +83,11 @@ code_change(_OldVsn, State, _Extra) ->
 %% Internal Function Definitions
 %% ------------------------------------------------------------------
 
-pruneTable(Table, Size, Var) -> 
-	Cleaner = fun() -> 
-		ets:foldl(fun({Key, Count, _Value}, Acc)-> lists:sublist(lists:merge(Acc, [{Count, Key}]), 2*Var) end, [], Table)
-	end,
-	spawn(Cleaner),
-	ok.
+pruneTable(Table, ActualSize, Size, Var, Act, Prob) when ActualSize > Size+Var -> 
+	io:format("~p~n",[[Table,ActualSize, Size,Var]]),
+	Prune = ActualSize-(Size-Var),
+	DeleteList = ets:foldl(fun({Key, Count, _Value}, Acc)-> lists:sublist(lists:merge(Acc, [{Count, Key}]), Prune) end, [], Table),
+	[ets:delete(Table, Key) || {_Count, Key} <- DeleteList],
+	{ok, Bloom} = ebloom:new(Act*Size, Prob, random:uniform(10000)),
+	NewFilter = ets:foldl(fun({Key, _Count, _Val}, Acc) -> ebloom:insert(Acc, Key), Acc end, Bloom, Table),
+	NewFilter.
