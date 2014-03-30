@@ -46,7 +46,7 @@ handle_call(_Request, _From, State) ->
 handle_cast({get_table, Name}, State) ->
 	case ets:info(Name) of
 		undefined ->
-			Table = ets:new(Name, [named_table, {heir, self(), Name}]),
+			Table = ets:new(Name, [named_table, public, {heir, self(), Name}]),
 			ets:give_away(Table, whereis(Name), fresh);
 		_ ->
 			ets:give_away(Name, whereis(Name), stale)

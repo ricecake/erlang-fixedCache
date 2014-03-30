@@ -39,9 +39,32 @@ init({Name, Opts}) ->
 		{ok, {stale, Table}} -> {ok, #cache{table=Table, filter=Bloom, size=Size, variance=Var}}
 	end.
 
+
+handle_call({get, Key}, _From, #cache{table=Table, filter=Bloom} = State) -> 
+	case ebloom:contains(Bloom, Key) of
+		false -> {reply, {ok, undef}, State};
+		true  ->
+			[{Key, _Counter, Value}] = ets:lookup(Table,Key),
+			ets:update_counter(Table, Key, 1),
+			{reply, {ok, {Key, Value}}, State}
+	end;
 handle_call(_Request, _From, State) ->
     {reply, ok, State}.
 
+handle_cast({put, {Key, Value}}, #cache{table=Table, filter=Bloom, size=Size, variance=Var} = State) ->
+	case ets:insert_new(Table, {Key, 0, Value}) of
+		false -> ets:update_counter(Table, Key, 1), ets:update_element(Table, Key, {3, Value});
+		true  -> ebloom:insert(Bloom, Key)
+	end,
+	ok = case ets:info(Table, size) > Size+Var of
+		true -> pruneTable(Table, Size, Var);
+		false-> ok
+	end,
+	{noreply, State};
+handle_cast({del, Key}, #cache{table=Table} = State) -> 
+	true = ets:delete(Table, Key),
+	{noreply, State};
+handle_cast({new_bloom, NewBloom}, State) -> {noreply, State#cache{filter=NewBloom}};
 handle_cast(_Msg, State) ->
     {noreply, State}.
 
@@ -58,3 +81,9 @@ code_change(_OldVsn, State, _Extra) ->
 %% Internal Function Definitions
 %% ------------------------------------------------------------------
 
+pruneTable(Table, Size, Var) -> 
+	Cleaner = fun() -> 
+		ok
+	end,
+	spawn(Cleaner),
+	ok.
