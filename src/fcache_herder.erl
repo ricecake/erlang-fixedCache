@@ -1,4 +1,4 @@
--module(fcache_sup).
+-module(fcache_herder).
 
 -behaviour(supervisor).
 
@@ -23,5 +23,5 @@ start_link() ->
 %% ===================================================================
 
 init([]) ->
-    {ok, { {one_for_one, 5, 10}, [?CHILD(fcache_srv, worker), ?CHILD(fcache_herder, supervisor)]} }.
+    {ok, { {simple_one_for_one, 5, 10}, [?CHILD(fcache_worker, worker)]} }.
 
