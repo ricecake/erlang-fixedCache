@@ -83,7 +83,7 @@ code_change(_OldVsn, State, _Extra) ->
 
 pruneTable(Table, Size, Var) -> 
 	Cleaner = fun() -> 
-		ok
+		ets:foldl(fun({Key, Count, _Value}, Acc)-> lists:sublist(lists:merge(Acc, [{Count, Key}]), 2*Var) end, [], Table)
 	end,
 	spawn(Cleaner),
 	ok.
